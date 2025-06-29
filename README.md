@@ -6,6 +6,6 @@
 
 原始PPO代码由Chatgpt生产
 
-![ppo_training_plot](https://github.com/user-attachments/assets/e50d311b-5ecf-42c3-a68b-176efa5b08dd)
+![ppo_training_plot](https://github.com/user-attachments/assets/24de5e98-0a98-46e5-a17a-0c7577c80d29)
 
-![vcppo_training_plot](https://github.com/user-attachments/assets/b0c3e48f-4e88-4c81-a611-8378433bb168)
+[vcppo_training_log.txt](https://github.com/user-attachments/files/20965662/vcppo_training_log.txt)
