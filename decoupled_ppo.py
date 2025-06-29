@@ -1,4 +1,4 @@
-# decoupled_ppo_train.py
+# ppo_train.py
 import torch
 import gymnasium as gym
 from torch import nn, optim
@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 import re
 
 TOTAL_RUNS = 20  # 训练次数
-BASE_SAVE_PATH = "ppo_pendulum_model"
-LOG_FILE = "ppo_training_log.txt"
+BASE_SAVE_PATH = "vcppo_pendulum_model"
+LOG_FILE = "vcppo_training_log.txt"
 
 
 class Actor(nn.Module):
@@ -73,7 +73,9 @@ def ppo_train(run_id: int, log_file):
     epochs = 100
     steps_per_epoch = 4000
     gamma = 0.99
-    lam = 0.95
+    lam_actor = 0.95   # used for policy update
+    lam_critic = 1.0   # used for value target
+
     clip_ratio = 0.2
     train_iters = 80
     target_kl = 0.01
@@ -110,29 +112,35 @@ def ppo_train(run_id: int, log_file):
         with torch.no_grad():
             last_value = critic(torch.tensor(obs, dtype=torch.float32))
 
-        adv_buf = compute_gae(rew_buf, val_buf, mask_buf, gamma, lam)
-        ret_buf = [adv + val for adv, val in zip(adv_buf, val_buf)]
-        adv_buf = torch.tensor(adv_buf, dtype=torch.float32)
-        ret_buf = torch.tensor(ret_buf, dtype=torch.float32)
+        # ✅ Compute two sets of returns:
+        adv_actor = compute_gae(rew_buf, val_buf, mask_buf, gamma, lam_actor)
+        ret_critic = compute_gae(rew_buf, val_buf, mask_buf, gamma, lam_critic)
+        adv_actor = torch.tensor(adv_actor, dtype=torch.float32)
+        ret_critic = torch.tensor(ret_critic, dtype=torch.float32)
+
+        # Normalize advantage for policy
+        adv_actor = (adv_actor - adv_actor.mean()) / (adv_actor.std() + 1e-8)
+
+        # Stack buffers
         obs_buf = torch.stack(obs_buf)
         act_buf = torch.stack(act_buf)
         logp_buf = torch.stack(logp_buf)
-        adv_buf = (adv_buf - adv_buf.mean()) / (adv_buf.std() + 1e-8)
 
         for _ in range(train_iters):
             mean, std = actor(obs_buf)
             dist = Normal(mean, std)
             new_logp = dist.log_prob(act_buf).sum(axis=-1)
+
             ratio = torch.exp(new_logp - logp_buf)
-            clipped = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio)
-            loss_pi = -(torch.min(ratio * adv_buf, clipped * adv_buf)).mean()
+            clipped_ratio = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio)
+            loss_pi = -(torch.min(ratio * adv_actor, clipped_ratio * adv_actor)).mean()
 
             pi_optimizer.zero_grad()
             loss_pi.backward()
             pi_optimizer.step()
 
             value_pred = critic(obs_buf)
-            loss_v = ((value_pred - ret_buf) ** 2).mean()
+            loss_v = ((value_pred - ret_critic) ** 2).mean()
 
             vf_optimizer.zero_grad()
             loss_v.backward()
@@ -140,6 +148,7 @@ def ppo_train(run_id: int, log_file):
 
             kl = (logp_buf - new_logp).mean().item()
             if kl > 1.5 * target_kl:
+                print(f"Early stopping at train_iter due to KL: {kl:.4f}")
                 break
 
         avg_reward = sum(rew_buf) / len(rew_buf)
@@ -193,12 +202,12 @@ if __name__ == "__main__":
 
     plt.plot(reward_matrix, color="black", linewidth=2.5, label="Mean across runs")
 
-    plt.title("PPO Training: Avg Reward over Epochs")
+    plt.title("Decoupled PPO Training: Avg Reward over Epochs")
     plt.xlabel("Epoch")
     plt.ylabel("Average Reward")
     plt.ylim(-8, 0)
     plt.grid(True)
     plt.legend(loc="upper left", fontsize="small", ncol=2)
     plt.tight_layout()
-    plt.savefig("ppo_training_plot.png", dpi=200)
+    plt.savefig("decoupled_ppo_training_plot.png", dpi=200)
     plt.show()
